@@ -1,0 +1,3 @@
+# deploy.sh corre en Linux: si git lo checkoutea con CRLF (default en Windows), el shebang
+# `#!/bin/sh\r` no resuelve y el script no arranca. Forzar LF siempre.
+*.sh text eol=lf

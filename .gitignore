@@ -1,0 +1,3 @@
+# Artefactos de build: los zips los genera `npm run build all` en cada repo y se suben a mano.
+# El deploy los borra después de aplicarlos.
+*.zip
