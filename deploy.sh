@@ -17,9 +17,11 @@ FAILED_PROJECTS=""
 # script detecta un "cambio" en cada deploy y corre npm install eternamente.
 #
 # Ahora se compara la huella del package.json/package-lock.json QUE VIENE EN EL ZIP contra la que
-# se guardo la ultima vez que npm install corrio bien (marcador .deploy-deps.hash). El install
-# corre solo cuando cambian de verdad las dependencias declaradas, sin importar en que estado
-# quedo el archivo en disco.
+# se guardo la ultima vez que las dependencias se instalaron (marcador .deploy-deps.hash), sin
+# importar en que estado quedo el archivo en disco.
+#
+# El deploy NO instala: cuando la huella cambia solo lo AVISA y las instalas vos. Un `npm install`
+# en cada deploy es minutos de nada y un riesgo (resuelve el arbol de nuevo contra el registry).
 DEPS_MARKER=".deploy-deps.hash"
 
 # Produccion NO necesita las devDependencies: el servidor no compila ni testea nada, recibe el
@@ -126,22 +128,28 @@ deploy_project() {
 
   PROJECT_VERSION=$(read_version)
 
+  # El deploy NO instala dependencias: solo AVISA cuando cambiaron y deja que las instales
+  # a mano. Unica excepcion, sin node_modules el proceso ni arranca, asi que ahi si corre.
+  # Para instalar en el mismo deploy: DEPLOY_INSTALL_DEPS=1 ./deploy.sh
   if [ ! -d "node_modules" ]; then
-    echo "[$PROJECT_NAME] No hay node_modules. Ejecutando $NPM_INSTALL ..."
+    echo "[$PROJECT_NAME] No hay node_modules (el servicio no podria arrancar). Ejecutando $NPM_INSTALL ..."
     $NPM_INSTALL
     printf '%s\n' "$DEPS_NEW" > "$DEPS_MARKER"
     DEPS_ACTION="npm install (sin node_modules)"
   elif [ "$DEPS_OLD" != "$DEPS_NEW" ]; then
-    if [ "$DEPS_OLD" = "__first_deploy__" ]; then
-      echo "[$PROJECT_NAME] Sin marcador de dependencias previo. Ejecutando $NPM_INSTALL ..."
-      DEPS_ACTION="npm install (1er deploy)"
-    else
-      echo "[$PROJECT_NAME] Cambiaron las dependencias declaradas en el zip. Ejecutando $NPM_INSTALL ..."
+    if [ "${DEPLOY_INSTALL_DEPS:-0}" = "1" ]; then
+      echo "[$PROJECT_NAME] Cambiaron las dependencias y DEPLOY_INSTALL_DEPS=1. Ejecutando $NPM_INSTALL ..."
+      $NPM_INSTALL
+      # El marcador se escribe DESPUES del install: si falla, el proximo deploy lo reintenta.
+      printf '%s\n' "$DEPS_NEW" > "$DEPS_MARKER"
       DEPS_ACTION="npm install (deps nuevas)"
+    else
+      echo "[$PROJECT_NAME] *** CAMBIARON LAS DEPENDENCIAS DECLARADAS EN EL ZIP ***"
+      echo "[$PROJECT_NAME] No se instala nada. Corre a mano, en $PROJECT_DIR:"
+      echo "[$PROJECT_NAME]     $NPM_INSTALL && printf '%s\\n' '$DEPS_NEW' > $DEPS_MARKER"
+      echo "[$PROJECT_NAME] (el marcador es lo que evita que este aviso se repita en cada deploy)"
+      DEPS_ACTION="DEPS NUEVAS - instalar a mano"
     fi
-    $NPM_INSTALL
-    # El marcador se escribe DESPUES del install: si falla, el proximo deploy lo reintenta.
-    printf '%s\n' "$DEPS_NEW" > "$DEPS_MARKER"
   else
     DEPS_ACTION="sin cambios"
     echo "[$PROJECT_NAME] Dependencias sin cambios. No se ejecuta npm install."
