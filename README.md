@@ -22,6 +22,23 @@ El script, por cada proyecto: valida el zip, borra las carpetas que el zip reemp
 `assets`), descomprime, instala dependencias **solo si cambiaron**, borra el zip y reinicia el
 servicio con pm2. Al final imprime una tabla con la versión que quedó desplegada en cada repo.
 
+### Dependencias: no hay que decidir nada
+
+No hace falta acordarse de ninguna variable de entorno. El script decide con lo que tiene:
+
+| Situación | Qué hace |
+|---|---|
+| La huella de `package.json` + `package-lock.json` no cambió | No instala nada |
+| Cambió y el zip **trae** `package-lock.json` | Instala solo: con lock aplica el árbol exacto validado en dev, no re-resuelve nada |
+| Cambió y el zip **no trae** lock | Avisa y deja el comando; sin lock el install re-resolvería contra el registry |
+| No hay `node_modules` | Instala siempre (si no, el servicio no arranca) |
+
+Si las dependencias quedan pendientes, **el zip NO se borra**: se puede reintentar con
+`./deploy.sh <repo>` sin volver a subirlo.
+
+Salidas de emergencia: `DEPLOY_SKIP_DEPS=1` para deployar sin tocar dependencias aunque hayan
+cambiado, y `DEPLOY_INSTALL_DEPS=1` para forzar el install aunque el zip no traiga lock.
+
 ## Decisiones que no son obvias
 
 **El `npm install` se decide por un marcador, no por el archivo en disco.** Antes se comparaba el
