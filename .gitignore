@@ -1,3 +1,12 @@
 # Artefactos de build: los zips los genera `npm run build all` en cada repo y se suben a mano.
 # El deploy los borra después de aplicarlos.
 *.zip
+
+# NINGÚN archivo de entorno entra a este repo. Un .env de producción tiene la password de
+# Mongo, el SERVER_SECRET y la clave de cifrado de credenciales; una vez pusheado queda en
+# la historia de git para siempre y en cada clon. Ya pasó una vez (egarian-erp, 2026-08-06:
+# hubo que reescribir la historia con filter-repo + force-push y rotar los secretos).
+.env
+.env.*
+!.env.example
+
