@@ -207,14 +207,37 @@ deploy_project() {
   echo "[$PROJECT_NAME] Reiniciando servicio PM2..."
   # deploy_project corre bajo `if ! deploy_project`, asi que `set -e` NO aborta acá: si pm2 falla
   # hay que capturarlo a mano o el resumen mentiria diciendo que el servicio se reinicio.
-  pm2 flush "$PROJECT_NAME" || true
-  if pm2 restart "$PROJECT_NAME"; then
-    PM2_STATUS="reiniciado"
+  if [ "$PROJECT_NAME" = "egarian-api" ] && pm2 describe egarian-api-scheduler >/dev/null 2>&1; then
+    # Topologia multi-instancia del api (ver ecosystem.config.js): el SCHEDULER va
+    # PRIMERO (aplica las migraciones nuevas y recien entonces avisa ready) y despues
+    # el reload ROLLING de las web, que arrancan con el esquema ya al dia. Al reves
+    # las web nuevas esperan migraciones que el scheduler viejo no conoce y ciclan
+    # por timeout. Las web viejas siguen sirviendo durante todo el proceso: cero caida.
+    pm2 flush egarian-api-scheduler || true
+    pm2 flush egarian-api || true
+    if pm2 restart egarian-api-scheduler && pm2 reload egarian-api; then
+      PM2_STATUS="scheduler reiniciado + web recargadas"
+    else
+      PM2_STATUS="ERROR AL REINICIAR"
+      echo "[$PROJECT_NAME] pm2 FALLO (scheduler o web). El codigo nuevo esta en disco; revisar: pm2 ls && pm2 logs"
+      add_summary_row "$PROJECT_NAME" "$PROJECT_VERSION" "$FILE_COUNT" "$DEPS_ACTION" "$PM2_STATUS"
+      return 1
+    fi
   else
-    PM2_STATUS="ERROR AL REINICIAR"
-    echo "[$PROJECT_NAME] pm2 restart FALLO. El codigo nuevo esta en disco pero el proceso viejo sigue vivo."
-    add_summary_row "$PROJECT_NAME" "$PROJECT_VERSION" "$FILE_COUNT" "$DEPS_ACTION" "$PM2_STATUS"
-    return 1
+    if [ "$PROJECT_NAME" = "egarian-api" ]; then
+      echo "[$PROJECT_NAME] AVISO: no existe el proceso egarian-api-scheduler (topologia multi-instancia sin instalar)."
+      echo "[$PROJECT_NAME] Se hace un reinicio simple. Para instalar la topologia (corte breve, hacerlo en horario tranquilo):"
+      echo "[$PROJECT_NAME]     pm2 delete egarian-api && pm2 start $ROOT_DIR/ecosystem.config.js && pm2 save"
+    fi
+    pm2 flush "$PROJECT_NAME" || true
+    if pm2 restart "$PROJECT_NAME"; then
+      PM2_STATUS="reiniciado"
+    else
+      PM2_STATUS="ERROR AL REINICIAR"
+      echo "[$PROJECT_NAME] pm2 restart FALLO. El codigo nuevo esta en disco pero el proceso viejo sigue vivo."
+      add_summary_row "$PROJECT_NAME" "$PROJECT_VERSION" "$FILE_COUNT" "$DEPS_ACTION" "$PM2_STATUS"
+      return 1
+    fi
   fi
 
   UPDATED_PROJECTS="$UPDATED_PROJECTS $PROJECT_NAME"

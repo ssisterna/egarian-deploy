@@ -1,9 +1,38 @@
 # egarian-deploy
 
-Script de despliegue de Egarian en el VPS de producción. Un solo archivo: `deploy.sh`.
+Despliegue de Egarian en el VPS de producción. Dos archivos: `deploy.sh` (deploys diarios)
+y `ecosystem.config.js` (topología PM2 completa del VPS, fuente de verdad única).
 
-Vive en el servidor en `/usr/local/etc/deploy/`, al lado de los directorios de los proyectos
-(`/usr/local/etc/egarian-api`, `egarian-erp`, `egarian-store`).
+En el servidor: `deploy.sh` vive en `/usr/local/etc/deploy/`, y `ecosystem.config.js` se copia
+a su ubicación de siempre, `/usr/local/etc/ecosystem.config.js` — la raíz donde viven los
+proyectos (`/usr/local/etc/egarian-api`, `egarian-erp`, `egarian-store`). No hay ecosystems por
+repo: la topología completa se versiona acá y se lee en un solo lugar.
+
+## Topología PM2
+
+| Proceso | Instancias | Puerto | Qué hace |
+|---|---|---|---|
+| `egarian-api` | 2 (cluster) | :4000 | HTTP puro (ERP, store, POS, portales). Sin crons ni migraciones. |
+| `egarian-api-scheduler` | 1 (fork) | :4001 | Migraciones, crons, colas del asistente. Su HTTP es solo ops local. |
+| `egarian-erp` | 1 | — | Admin BFF/UI |
+| `egarian-store` | 1 | — | Storefront público |
+
+Apache proxya SOLO a :4000; ni :4000 ni :4001 pueden estar abiertos en el firewall.
+
+**Orden de reinicio del api** (lo hace `deploy.sh` solo): scheduler PRIMERO (aplica las
+migraciones nuevas), después `pm2 reload` rolling de las web (arrancan con el esquema al día,
+cero caída). Si el proceso `egarian-api-scheduler` no existe todavía, `deploy.sh` avisa y cae
+al reinicio simple de siempre.
+
+**Instalación inicial de la topología** (una vez, corte breve — horario tranquilo). Antes de
+pisar el `ecosystem.config.js` actual del server, compararlo con el de este repo y trasladar
+cualquier ajuste que tenga de más (env, `max_memory_restart`, etc.):
+
+```sh
+pm2 delete egarian-api
+pm2 start /usr/local/etc/ecosystem.config.js
+pm2 save
+```
 
 ## Uso
 
@@ -56,13 +85,14 @@ baja un binario de Mongo entero en su postinstall). Verificado que ningún archi
 requiere una devDependency: el único `require('ts-node')` (en el `worker.entry` del API) está
 detrás de un guard que solo aplica corriendo desde `src/`.
 
-**El `package-lock.json` NO viaja a producción.** Se intentó (para que prod corriera el mismo árbol
-que se prueba en desarrollo) y tumbó al ERP: los locks de los repos describen árboles que no
-existen — el `jsonwebtoken@9.0.1` del `node_modules` local declara las deps de la 8.x, y el lock se
-generó desde ese árbol corrupto, sin las `lodash.*` que el paquete real del registry necesita. El
-servidor instaló ese árbol incompleto y el arranque murió con `MODULE_NOT_FOUND`. Sin lock, npm
-resuelve contra el registry y arma un árbol sano. Para volver a mandarlo hay que regenerar los
-locks desde cero (`rm -rf node_modules package-lock.json && npm install`) y verificar el resultado.
+**El `package-lock.json` SÍ viaja a producción (desde 2026-08-06).** Historia: se deshabilitó el
+2026-07-13 porque los locks describían árboles corruptos (el `jsonwebtoken@9.0.1` local declaraba
+deps de la 8.x) y el ERP murió con `MODULE_NOT_FOUND`. La condición para rehabilitarlo era
+regenerar los locks desde cero (`rm -rf node_modules package-lock.json && npm install`) con la
+suite completa corriendo sobre ese árbol — hecho en la fase 1 de la actualización de dependencias.
+Con lock, el install del servidor es determinista: aplica el árbol exacto validado en desarrollo
+en vez de acumular uno propio y divergente (el deploy del 2026-08-06 sin lock dejó prod con 23
+vulnerabilidades mientras dev tenía 3).
 
 **Un `pm2 restart` fallido no pasa desapercibido.** `deploy_project` se invoca dentro de un
 `if ! deploy_project`, así que `set -e` no aborta adentro de la función: si `pm2 restart` falla hay
@@ -84,9 +114,14 @@ db.dbmigrations.deleteMany({})
 ## Verificar después de desplegar
 
 ```sh
-pm2 ls                                   # los tres online
+pm2 ls                                   # los CUATRO online: egarian-api ×2 (cluster),
+                                         # egarian-api-scheduler, egarian-erp, egarian-store
 pm2 logs <proyecto> --lines 20           # arranque limpio, sin MODULE_NOT_FOUND
 ```
+
+Para el api, además: el scheduler tiene que loguear las migraciones aplicadas (verificar en la
+base con `db.dbmigrations.find()`), y las web tienen que haber pasado por "Esquema al día, la
+instancia puede servir" en su arranque.
 
 Los `logger.info` de la API no siempre llegan a `logs/`: el logger corre en modo NORMAL, que
 acumula el info en un buffer y solo lo vuelca a disco cuando ocurre un error. Para verificar que
