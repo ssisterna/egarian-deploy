@@ -48,7 +48,7 @@ module.exports = {
             cwd: '/usr/local/etc/egarian-api',
             script: 'dist/index.js',
             exec_mode: 'cluster',
-            instances: 2,
+            instances: 1, //Cambiar a N para levanar N instancias de APPI
             wait_ready: true,
             // En un deploy con migración larga el 'ready' se demora: la instancia
             // web espera a que el scheduler termine de migrar antes de escuchar.

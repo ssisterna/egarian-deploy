@@ -12,7 +12,7 @@ repo: la topología completa se versiona acá y se lee en un solo lugar.
 
 | Proceso | Instancias | Puerto | Qué hace |
 |---|---|---|---|
-| `egarian-api` | 2 (cluster) | :4000 | HTTP puro (ERP, store, POS, portales). Sin crons ni migraciones. |
+| `egarian-api` | 1 (cluster, escalable con `pm2 scale`) | :4000 | HTTP puro (ERP, store, POS, portales). Sin crons ni migraciones. |
 | `egarian-api-scheduler` | 1 (fork) | :4001 | Migraciones, crons, colas del asistente. Su HTTP es solo ops local. |
 | `egarian-erp` | 1 | — | Admin BFF/UI |
 | `egarian-store` | 1 | — | Storefront público |
