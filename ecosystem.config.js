@@ -165,5 +165,38 @@ module.exports = {
 		  },
 		},
 
+
+        // ── egarian-app (PWA movil) ──────────────────────────────────────────
+        // Servidor estatico: sirve dist/ y nada mas. Las llamadas /api las resuelve
+        // Apache contra :4000 dentro del MISMO VirtualHost (app.egarian.com), asi que
+        // este proceso nunca habla con la API y la PWA no suma un origen al CORS.
+        // Escucha en 127.0.0.1: su unico cliente es el Apache local.
+        {
+            name: 'egarian-app',
+            script: 'server.mjs',
+            cwd: '/usr/local/etc/egarian-app',
+            instances: 1,
+            exec_mode: 'fork',
+            node_args: '--max-old-space-size=128',
+
+            // Logs
+            out_file:   '/usr/local/etc/pm2_logs/egarian-app-out.log',
+            error_file: '/usr/local/etc/pm2_logs/egarian-app-err.log',
+            log_date_format: 'YYYY-MM-DD HH:mm:ss',
+            merge_logs: false,
+
+            // Reinicio automático
+            watch: false,
+            autorestart: true,
+            max_restarts: 10,
+            min_uptime: '5s',
+            restart_delay: 2000,
+
+            env: {
+                NODE_ENV: 'production',
+                HOST: '127.0.0.1',
+                PORT: '4200',
+            },
+        },
     ],
 };

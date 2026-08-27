@@ -4,7 +4,7 @@ set -eu
 
 DEPLOY_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(dirname "$DEPLOY_DIR")
-DEFAULT_PROJECTS="egarian-api egarian-store egarian-erp"
+DEFAULT_PROJECTS="egarian-api egarian-store egarian-erp egarian-app"
 UPDATED_PROJECTS=""
 SKIPPED_PROJECTS=""
 FAILED_PROJECTS=""
@@ -254,7 +254,7 @@ DEPLOYED=0
 
 for project in $PROJECTS; do
   case "$project" in
-    egarian-api|egarian-store|egarian-erp)
+    egarian-api|egarian-store|egarian-erp|egarian-app)
       if [ -f "$DEPLOY_DIR/$project.zip" ]; then
         DEPLOYED=1
       fi
