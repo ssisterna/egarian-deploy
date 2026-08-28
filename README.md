@@ -37,8 +37,11 @@ pm2 save
 ## Uso
 
 ```sh
-# 1. En cada repo, generar el zip
+# 1. Generar los zips. Desde egarian-api, los cuatro de una:
 npm run build all
+
+# ...o el de un repo solo, parado en ese repo (mismo comando en los cuatro):
+npm run build zip
 
 # 2. Subir los .zip a /usr/local/etc/deploy/ en el servidor
 
