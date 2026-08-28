@@ -2,6 +2,11 @@
 # El deploy los borra después de aplicarlos.
 *.zip
 
+# Release del POS: `npm run build` de egarian-pos deja acá los tres archivos que van a
+# assets/egarian-pos/ del ERP (instalador completo, paquete liviano y manifiesto). El
+# manifiesto es .json, así que no lo cubre la regla de arriba.
+egarian-pos/
+
 # NINGÚN archivo de entorno entra a este repo. Un .env de producción tiene la password de
 # Mongo, el SERVER_SECRET y la clave de cifrado de credenciales; una vez pusheado queda en
 # la historia de git para siempre y en cada clon. Ya pasó una vez (egarian-erp, 2026-08-06:
