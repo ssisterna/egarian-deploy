@@ -273,6 +273,63 @@ if [ "$DEPLOYED" -eq 0 ]; then
   echo "No se encontro ningun zip para desplegar en $DEPLOY_DIR."
 fi
 
+# ---------------------------------------------------------------------------
+# Release del POS
+#
+# No se "despliega" como los otros: son archivos que las terminales descargan
+# solas. Se dejan en assets del ERP, que es de donde los sirve por HTTP y de
+# donde el API lee el manifiesto (POS_INSTALLER_MANIFEST_PATH).
+#
+# El ORDEN es lo que importa y por eso se hace acá y no a mano: el manifiesto
+# anuncia la version, asi que va ULTIMO. Publicado antes que los zips, cada POS
+# anuncia una version cuyo paquete todavia no existe — y el instalador completo
+# tiene nombre fijo, asi que se estaria ofreciendo el anterior.
+# ---------------------------------------------------------------------------
+POS_SRC="$DEPLOY_DIR/egarian-pos"
+POS_DEST="/usr/local/etc/egarian-erp/assets/egarian-pos"
+
+if [ -d "$POS_SRC" ] && [ -n "$(ls -A "$POS_SRC" 2>/dev/null)" ]; then
+  echo ""
+  echo "--- Release del POS ---"
+
+  if [ ! -d "$POS_DEST" ]; then
+    echo "  No existe $POS_DEST — se omite (revisar la instalacion del ERP)."
+  else
+    POS_OK=1
+
+    # 1) Instalador completo y paquetes livianos. Los binarios PRIMERO.
+    for f in "$POS_SRC"/*.zip; do
+      [ -f "$f" ] || continue
+      if cp -f "$f" "$POS_DEST/"; then
+        echo "  OK  $(basename "$f")"
+      else
+        echo "  ERROR al copiar $(basename "$f")"
+        POS_OK=0
+      fi
+    done
+
+    # 2) El manifiesto, solo si los binarios llegaron bien.
+    if [ -f "$POS_SRC/latest.json" ]; then
+      if [ "$POS_OK" -eq 1 ]; then
+        if cp -f "$POS_SRC/latest.json" "$POS_DEST/"; then
+          POS_VER=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$POS_SRC/latest.json" | head -1)
+          echo "  OK  latest.json — publicada la version ${POS_VER:-(sin version)}"
+        else
+          echo "  ERROR al copiar latest.json"
+          POS_OK=0
+        fi
+      else
+        echo "  latest.json NO se publico: fallo la copia de algun paquete."
+        echo "  (publicarlo igual anunciaria una version cuyo zip no esta)"
+      fi
+    else
+      echo "  Sin latest.json: se copiaron los paquetes pero no se anuncia ninguna version."
+    fi
+
+    [ "$POS_OK" -eq 1 ] || FAILED_PROJECTS="$FAILED_PROJECTS egarian-pos"
+  fi
+fi
+
 echo ""
 echo "=========================== RESUMEN DE DEPLOY ==========================="
 if [ -n "$SUMMARY_ROWS" ]; then
