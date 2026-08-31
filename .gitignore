@@ -2,9 +2,18 @@
 # El deploy los borra después de aplicarlos.
 *.zip
 
-# Release del POS: `npm run build` de egarian-pos deja acá los tres archivos que van a
-# assets/egarian-pos/ del ERP (instalador completo, paquete liviano y manifiesto). El
-# manifiesto es .json, así que no lo cubre la regla de arriba.
+# Material a subir al servidor. Los cinco repos dejan acá sus artefactos con
+# `npm run build zip` (y `npm run build` en el POS): los cuatro zips y la carpeta
+# egarian-pos con el release del POS (instalador completo, paquete liviano y manifiesto).
+#
+# Va en su propia carpeta para no mezclarse con las HERRAMIENTAS del deploy, que sí viven
+# en este repo —deploy.sh, ecosystem.config.js, scrtips/— ni con el .env de producción.
+# Se copia entera a /usr/local/etc/deploy del servidor, y se puede vaciar sin pensar:
+# todo lo que hay adentro se regenera con un build.
+to_deploy/
+
+# Ubicación anterior del release del POS, antes de to_deploy. Se conserva la regla por si
+# alguien corre un build de una versión previa del script.
 egarian-pos/
 
 # NINGÚN archivo de entorno entra a este repo. Un .env de producción tiene la password de
