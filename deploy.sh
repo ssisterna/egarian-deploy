@@ -296,6 +296,7 @@ if [ -d "$POS_SRC" ] && [ -n "$(ls -A "$POS_SRC" 2>/dev/null)" ]; then
     echo "  No existe $POS_DEST — se omite (revisar la instalacion del ERP)."
   else
     POS_OK=1
+    POS_VER=""   # la anuncia el manifiesto; se usa mas abajo para no rotarla nunca
 
     # 1) Instalador completo y paquetes livianos. Los binarios PRIMERO.
     for f in "$POS_SRC"/*.zip; do
@@ -326,7 +327,60 @@ if [ -d "$POS_SRC" ] && [ -n "$(ls -A "$POS_SRC" 2>/dev/null)" ]; then
       echo "  Sin latest.json: se copiaron los paquetes pero no se anuncia ninguna version."
     fi
 
-    [ "$POS_OK" -eq 1 ] || FAILED_PROJECTS="$FAILED_PROJECTS egarian-pos"
+    # 3) Rotacion en destino: se conservan las DOS ultimas versiones de cada paquete.
+    #
+    # Los paquetes de update llevan la version en el nombre (`...-v0.1.0.37.zip`), asi que sin
+    # esto el directorio crece con cada release y nadie sabe cual esta vigente. El instalador
+    # completo tiene nombre FIJO —se pisa solo— y por eso NO entra en la rotacion: el patron
+    # exige `-v<version>` antes del `.zip`.
+    #
+    # Por que DOS y no solo la publicada: una terminal se entera de la version nueva por el sync
+    # de configuracion (cron */5), y entre que lee el manifiesto y baja el zip pasan segundos o
+    # minutos. Borrando la anterior en el mismo acto, una terminal que quedo a mitad de camino
+    # con el manifiesto viejo se come un 404. Con una de gracia esa ventana no existe, y cuesta
+    # ~300 KB de disco.
+    #
+    # La version que ANUNCIA EL MANIFIESTO nunca se rota, sea o no la mas alta. Ordenar por
+    # numero da por sentado que lo recien publicado es lo mas nuevo, y en un rollback no lo es:
+    # publicar la 0.1.0.35 teniendo 36 y 37 en destino la dejaria fuera de las dos "ultimas" y
+    # la borraria en el mismo acto en que el manifiesto la anuncia — 404 para todo el parque.
+    if [ "$POS_OK" -eq 1 ]; then
+      POS_KEEP=2
+      VERSIONADOS=$(ls -1 "$POS_DEST" 2>/dev/null | grep -E '^.+-v[0-9]+(\.[0-9]+)*\.zip$' || true)
+      if [ -n "$VERSIONADOS" ]; then
+        # Se rota por FAMILIA (el nombre sin la version): si manana convive mas de un tipo de
+        # paquete versionado, cada uno conserva sus dos ultimas y no se pisan entre si.
+        FAMILIAS=$(printf '%s\n' "$VERSIONADOS" | sed -E 's/-v[0-9]+(\.[0-9]+)*\.zip$//' | sort -u)
+        for fam in $FAMILIAS; do
+          SOBRANTES=$(printf '%s\n' "$VERSIONADOS" | grep -E "^${fam}-v[0-9]+(\.[0-9]+)*\.zip$" | sed -E "s/^${fam}-v//; s/\.zip$//" | sort -V -r | tail -n +$((POS_KEEP + 1)) || true)
+          for v in $SOBRANTES; do
+            if [ -n "$POS_VER" ] && [ "$v" = "$POS_VER" ]; then
+              echo "  Rotacion: se CONSERVA ${fam}-v${v}.zip — es la version que anuncia el manifiesto"
+              continue
+            fi
+            if rm -f "$POS_DEST/${fam}-v${v}.zip"; then
+              echo "  Rotacion: ${fam}-v${v}.zip eliminado (se conservan las ultimas $POS_KEEP)"
+            else
+              echo "  AVISO: no se pudo eliminar ${fam}-v${v}.zip"
+            fi
+          done
+        done
+      fi
+
+      # 4) El origen se borra solo si se publico ENTERO, igual que los zips de los otros
+      # proyectos: si algo fallo se conserva para reintentar sin volver a subirlo desde la
+      # maquina de desarrollo. Dejarlo despues de un deploy OK es peor que inutil — son ~78 MB
+      # que la proxima corrida vuelve a copiar, y confunden sobre que version esta publicada.
+      # El guard del path es barato al lado de lo que costaria un `rm -rf` sobre una vacia.
+      if [ -n "$POS_SRC" ] && [ -d "$POS_SRC" ] && rm -rf "$POS_SRC"; then
+        echo "  Limpieza: $POS_SRC eliminado (ya publicado)."
+      else
+        echo "  AVISO: no se pudo eliminar $POS_SRC — borrarlo a mano."
+      fi
+    else
+      echo "  Se conserva $POS_SRC para poder reintentar."
+      FAILED_PROJECTS="$FAILED_PROJECTS egarian-pos"
+    fi
   fi
 fi
 
