@@ -17,32 +17,31 @@ estado sin abrirlos uno por uno en el ERP.
 
 ## Uso
 
-Necesita `mongoose`, que no está en esta carpeta. Lo más simple en el servidor es copiarlo al
-directorio del API y correrlo ahí: encuentra el `node_modules` y el `.env` solo.
+**Para pegar en Studio 3T / mongosh** — no hay nada que copiar al servidor.
 
-```bash
-cp clonar-rol-modelo.js /usr/local/etc/egarian-api/
-cd /usr/local/etc/egarian-api
+1. Conectate a la base correcta en 3T (**ojo con prod**).
+2. Pegá `clonar-rol-modelo.js` en la IntelliShell y ajustá los parámetros de arriba:
 
-MODELO_ID=6a47c3c7451964c77c37297f node clonar-rol-modelo.js              # DRY RUN
-MODELO_ID=6a47c3c7451964c77c37297f node clonar-rol-modelo.js --aplicar    # escribe (deja backup)
-MODELO_ID=6a47c3c7451964c77c37297f node clonar-rol-modelo.js --code=basico
+```js
+const MODELO_ID = '6a47c3c7451964c77c37297f';   // rol de referencia (plan básico en system)
+const EXCLUIR   = ['system', 'dcom'];           // empresas que NO se tocan
+const SOLO_CODE = '';                           // '' = todos los roles; o p.ej. 'basico'
+const DRY_RUN   = true;                         // ponelo en false cuando estés de acuerdo
 ```
 
-**No hace falta exportar `MONGO_URL`**: si no está en el entorno, el script lo lee del `.env` del
-API (o del que le pases con `--env=/ruta/.env.production`). Se toma la línea tal cual, así que la
-contraseña con `&` no se corta como pasaría al exportarla desde el shell.
-
-Variables: `MODELO_ID` (o `MODELO_COMPANY` + `MODELO_CODE`), `EXCLUIR` (por defecto
-`system,dcom`), `MONGO_URL` si querés forzarla.
+3. Corré primero con `DRY_RUN = true`: lista empresa por empresa qué roles alcanza, con sus
+   permisos y cuántos usuarios tiene cada uno.
+4. Revisá esa lista y volvé a correr con `DRY_RUN = false`.
 
 ## Volver atrás
 
-Cada corrida con `--aplicar` deja un `backup-roles-<fecha>.json` con los permisos anteriores de
-cada rol tocado:
+Antes de escribir, guarda los permisos anteriores de cada rol tocado en la colección
+`_backup_roles_permisos`, y al terminar imprime el snippet de reversión con el id de la corrida
+— copiar, pegar y listo:
 
-```bash
-node clonar-rol-modelo.js --revertir=backup-roles-2026-09-03T18-35-13-020Z.json --aplicar
+```js
+db.getCollection('_backup_roles_permisos').find({ corrida: '2026-09-03T...' }).forEach(b =>
+  db.roles.updateOne({ _id: b.roleId }, { $set: { permissions: b.permissions, elevatedPermissions: b.elevatedPermissions } }));
 ```
 
 ## Qué copia y qué no

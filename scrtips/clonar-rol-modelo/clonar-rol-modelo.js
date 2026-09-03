@@ -1,217 +1,113 @@
-/**
- * COPIA LOS PERMISOS DE UN ROL MODELO A LOS ROLES DE LAS DEMAS EMPRESAS.
+/* =============================================================================
+ *  CLONAR LOS PERMISOS DE UN ROL MODELO A LAS DEMÁS EMPRESAS
+ *                                       —  mongosh / Studio 3T (IntelliShell)
+ * =============================================================================
+ *  Copia `permissions` y `elevatedPermissions` de un rol de referencia (el del
+ *  plan, armado en la compañía del sistema) a los roles de las demás empresas,
+ *  para dejarlos a todos en el mismo estado sin abrirlos uno por uno en el ERP.
  *
- * Se armo un rol de referencia (el del plan) con el vocabulario nuevo de permisos, y los roles
- * que ya existian en las empresas quedaron con listas viejas o incompletas. Esto los pone a
- * todos en el mismo estado, sin tener que abrir rol por rol en el ERP.
+ *  PISA la lista de permisos de cada rol alcanzado. Dos consecuencias:
+ *    · Si una empresa tiene VARIOS roles con alcances distintos (Cajero,
+ *      Vendedor, Encargado), al pisarlos quedan IDÉNTICOS y esa distinción se
+ *      pierde. El DRY RUN marca esas empresas con "OJO": miralas antes.
+ *    · Los permisos viajan en el token de sesión: quien esté conectado sigue
+ *      con los viejos hasta que vuelva a entrar.
  *
- * ⚠️ ES DESTRUCTIVO: PISA la lista de permisos de cada rol alcanzado. Dos consecuencias que
- * conviene tener claras ANTES de correrlo con --aplicar:
+ *  QUÉ COPIA: permissions (la lista mixta de IDs de menú + claves del catálogo,
+ *  que es lo que hace funcionar menú y matriz juntos) y elevatedPermissions.
+ *  QUÉ NO TOCA: code, name, active, companyCode, _id — cada rol conserva su
+ *  identidad — ni isTemplate, que es marca de plataforma y no se hereda.
+ *  Tampoco toca las empresas excluidas, los roles borrados ni el rol modelo.
  *
- *   1. Si una empresa tiene varios roles con alcances distintos (Cajero, Vendedor, Encargado),
- *      todos quedan IGUALES: la distincion se pierde. Por eso el DRY RUN lista los roles de
- *      cada empresa — miralos y, si hace falta, acota con --code.
- *   2. Los permisos viajan en el token de sesion: quien este conectado sigue con los viejos
- *      hasta que vuelva a entrar.
+ *  ES IDEMPOTENTE: la segunda corrida informa "ya está igual" y no escribe.
  *
- * QUE COPIA: `permissions` y `elevatedPermissions` del modelo, tal cual (la lista mixta de IDs
- * de menu + claves del catalogo es lo que hace funcionar menu y matriz juntos).
- * QUE NO TOCA: code, name, active, companyCode, _id — cada rol conserva su identidad — ni
- * `isTemplate`, que es marca de plataforma y no se hereda.
+ *  USO
+ *    1. Conectate a la base correcta (ojo con prod).
+ *    2. Poné MODELO_ID (y, si querés, SOLO_CODE).
+ *    3. Corré con DRY_RUN = true -> lista qué tocaría, sin escribir nada.
+ *    4. Revisá la lista, poné DRY_RUN = false y volvé a correr.
  *
- * SEGURO POR DISEÑO:
- *  - DRY RUN por defecto: sin --aplicar no escribe nada.
- *  - BACKUP obligatorio: antes de escribir guarda `backup-roles-<fecha>.json` con los permisos
- *    anteriores de cada rol tocado. Para revertir: node clonar-rol-modelo.js --revertir=<archivo>
- *  - IDEMPOTENTE: la segunda corrida no cambia nada (compara antes de escribir).
- *  - Nunca toca las empresas excluidas (por defecto system y dcom) ni los roles borrados.
- *  - Nunca toca el rol modelo.
- *
- * USO:
- *   node clonar-rol-modelo.js                          # DRY RUN: que empresas y roles alcanza
- *   node clonar-rol-modelo.js --aplicar                # escribe (deja backup)
- *   node clonar-rol-modelo.js --code=basico            # solo los roles con ese codigo
- *   node clonar-rol-modelo.js --revertir=backup-roles-2026-09-03T18-00-00.json
- *
- *   MODELO_ID=6a47c3c7451964c77c37297f   (o MODELO_COMPANY=system MODELO_CODE=basico)
- *   EXCLUIR=system,dcom                  empresas que no se tocan
- *   MONGO_URL=...                        en produccion, /usr/local/etc/egarian_api/.env.production
- */
-const mongoose = require("mongoose");
-const fs = require("fs");
-const path = require("path");
+ *  HAY UNDO: antes de escribir guarda los permisos anteriores en la colección
+ *  `_backup_roles_permisos`. Al final se imprime el snippet para revertir.
+ * ========================================================================== */
 
-const APLICAR   = process.argv.includes("--aplicar");
-const REVERTIR  = (process.argv.find((a) => a.startsWith("--revertir=")) || "").split("=")[1];
-const SOLO_CODE = (process.argv.find((a) => a.startsWith("--code=")) || "").split("=")[1];
+// ----------------------------------------------------------------- PARÁMETROS
+const MODELO_ID = '6a47c3c7451964c77c37297f';   // rol de referencia (plan básico en system)
+const EXCLUIR   = ['system', 'dcom'];           // empresas que NO se tocan
+const SOLO_CODE = '';                           // '' = todos los roles; o p.ej. 'basico'
+const DRY_RUN   = true;                         // true = solo informa, no escribe
+// -----------------------------------------------------------------------------
 
-const MODELO_ID      = process.env.MODELO_ID || "6a47c3c7451964c77c37297f";
-const MODELO_COMPANY = process.env.MODELO_COMPANY || "";
-const MODELO_CODE    = process.env.MODELO_CODE || "";
-const EXCLUIR = (process.env.EXCLUIR || "system,dcom").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+const modelo = db.roles.findOne({ _id: ObjectId(MODELO_ID) });
+if (!modelo) throw new Error('No se encontró el rol modelo ' + MODELO_ID);
 
-const mismaLista = (a, b) =>
-  JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort());
+const permisos = modelo.permissions || [];
+const elevados = modelo.elevatedPermissions || [];
 
-/**
- * MONGO_URL del entorno o, si no esta, del .env del API.
- *
- * Se lee del archivo a proposito: la contraseña de produccion tiene `&` y exportarla a mano
- * desde el shell la corta (y escaparla es un paso mas para equivocarse). Se toma SOLO la linea
- * MONGO_URL=, tal cual, sin pasar por el shell.
- */
-function resolverMongoUrl() {
-  if (process.env.MONGO_URL) return process.env.MONGO_URL;
-  const explicito = (process.argv.find((a) => a.startsWith("--env=")) || "").split("=")[1];
-  const candidatos = [
-    explicito,
-    "/usr/local/etc/egarian_api/.env.production",
-    "/usr/local/etc/egarian-api/.env.production",
-    "/usr/local/etc/egarian-api/.env",
-    path.join(process.cwd(), ".env"),
-  ].filter(Boolean);
+print('MODELO: [' + modelo.companyCode + '] ' + modelo.code + ' — ' + (modelo.name || ''));
+print('        ' + permisos.length + ' permiso(s), ' + elevados.length + ' con autorización');
+print('EXCLUIDAS: ' + EXCLUIR.join(', ') + (SOLO_CODE ? '   |   solo rol: ' + SOLO_CODE : ''));
+print(DRY_RUN ? '\n*** DRY RUN — no escribe nada ***\n' : '\n*** APLICANDO ***\n');
 
-  for (const archivo of candidatos) {
-    try {
-      const linea = fs.readFileSync(archivo, "utf8").split(/\r?\n/).find((l) => l.startsWith("MONGO_URL="));
-      if (linea) {
-        console.log(`(MONGO_URL leido de ${archivo})`);
-        return linea.slice("MONGO_URL=".length).trim().replace(/^["']|["']$/g, "");
-      }
-    } catch { /* siguiente candidato */ }
-  }
-  return "";
-}
-
-async function revertir(db, archivo) {
-  const backup = JSON.parse(fs.readFileSync(archivo, "utf8"));
-  console.log(`Revirtiendo ${backup.roles.length} rol(es) desde ${path.basename(archivo)} (tomado ${backup.fecha})\n`);
-  if (!APLICAR) {
-    for (const r of backup.roles) console.log(`  [${r.companyCode}] ${r.code} — volveria a ${r.permissions.length} permiso(s)`);
-    console.log("\nDRY RUN: no se escribio nada. Agrega --aplicar para revertir de verdad.");
-    return;
-  }
-  for (const r of backup.roles) {
-    await db.collection("roles").updateOne(
-      { _id: new mongoose.Types.ObjectId(r._id) },
-      { $set: { permissions: r.permissions, elevatedPermissions: r.elevatedPermissions || [] } },
-    );
-  }
-  console.log(`Listo: ${backup.roles.length} rol(es) revertidos.`);
-}
-
-async function main() {
-  const url = resolverMongoUrl();
-  if (!url) {
-    console.error("No se encontro MONGO_URL: exportalo, o pasa --env=/ruta/al/.env.production");
-    process.exit(1);
-  }
-
-  await mongoose.connect(url);
-  const db = mongoose.connection.db;
-  console.log(`Base: ${mongoose.connection.name}${APLICAR ? "  [APLICAR]" : "  [DRY RUN — no escribe nada]"}\n`);
-
-  if (REVERTIR) {
-    await revertir(db, REVERTIR);
-    await mongoose.disconnect();
-    return;
-  }
-
-  // ── Rol modelo ──────────────────────────────────────────────────────────────
-  const filtroModelo = MODELO_COMPANY && MODELO_CODE
-    ? { companyCode: MODELO_COMPANY, code: MODELO_CODE }
-    : { _id: new mongoose.Types.ObjectId(MODELO_ID) };
-  const modelo = await db.collection("roles").findOne(filtroModelo);
-  if (!modelo) {
-    console.error(`No se encontro el rol modelo (${JSON.stringify(filtroModelo)}).`);
-    process.exit(1);
-  }
-  const permisos  = modelo.permissions || [];
-  const elevados  = modelo.elevatedPermissions || [];
-  console.log(`MODELO: [${modelo.companyCode}] ${modelo.code} — ${modelo.name || ""}`);
-  console.log(`        ${permisos.length} permiso(s), ${elevados.length} con autorizacion\n`);
-
-  // ── Alcance ─────────────────────────────────────────────────────────────────
-  const filtro = {
+const filtro = {
     companyCode: { $nin: EXCLUIR },
     deleted: { $ne: true },
-    _id: { $ne: modelo._id },
-    ...(SOLO_CODE ? { code: SOLO_CODE.toLowerCase() } : {}),
-  };
-  const roles = await db.collection("roles").find(filtro).sort({ companyCode: 1, code: 1 }).toArray();
+    _id: { $ne: modelo._id }
+};
+if (SOLO_CODE) filtro.code = SOLO_CODE;
 
-  console.log(`EMPRESAS EXCLUIDAS: ${EXCLUIR.join(", ")}`);
-  if (SOLO_CODE) console.log(`ACOTADO al codigo de rol: ${SOLO_CODE}`);
-  console.log(`ALCANCE: ${roles.length} rol(es)\n`);
+const roles = db.roles.find(filtro).sort({ companyCode: 1, code: 1 }).toArray();
 
-  if (!roles.length) {
-    console.log("No hay roles para tocar.");
-    await mongoose.disconnect();
-    return;
-  }
+// Igual al modelo = mismas dos listas, sin importar el orden.
+const misma = (a, b) => JSON.stringify((a || []).slice().sort()) === JSON.stringify((b || []).slice().sort());
 
-  // Agrupado por empresa: si una empresa tiene VARIOS roles, pisarlos a todos los deja iguales.
-  const porEmpresa = new Map();
-  for (const r of roles) {
-    if (!porEmpresa.has(r.companyCode)) porEmpresa.set(r.companyCode, []);
-    porEmpresa.get(r.companyCode).push(r);
-  }
-
-  const pendientes = [];
-  for (const [empresa, lista] of porEmpresa) {
-    const aviso = lista.length > 1 ? "   <-- OJO: mas de un rol, van a quedar IGUALES" : "";
-    console.log(`  ${empresa}${aviso}`);
-    for (const r of lista) {
-      const igual = mismaLista(r.permissions, permisos) && mismaLista(r.elevatedPermissions, elevados);
-      const usuarios = await db.collection("users").countDocuments({ companyCode: empresa, role: r.code, deleted: { $ne: true } });
-      console.log(`      ${r.code.padEnd(14)} ${String(r.name || "").padEnd(22)} ${String((r.permissions || []).length).padStart(3)} permisos, ${usuarios} usuario(s)${igual ? "   (ya igual al modelo)" : ""}`);
-      if (!igual) pendientes.push(r);
+const pendientes = [];
+let empresaActual = '';
+roles.forEach(r => {
+    if (r.companyCode !== empresaActual) {
+        empresaActual = r.companyCode;
+        const cuantos = roles.filter(x => x.companyCode === empresaActual).length;
+        print('  ' + empresaActual + (cuantos > 1 ? '   <-- OJO: ' + cuantos + ' roles, van a quedar IGUALES' : ''));
     }
-  }
-
-  console.log(`\n${pendientes.length} rol(es) cambiarian; ${roles.length - pendientes.length} ya estan igual al modelo.`);
-
-  if (!pendientes.length) {
-    console.log("Nada que hacer.");
-    await mongoose.disconnect();
-    return;
-  }
-
-  if (!APLICAR) {
-    console.log("\nDRY RUN: no se escribio nada.");
-    console.log("Revisa la lista de arriba — sobre todo las empresas marcadas con OJO — y volve a");
-    console.log("correrlo con --aplicar (o acotado con --code=<codigo>) cuando estes de acuerdo.");
-    await mongoose.disconnect();
-    return;
-  }
-
-  // ── Backup y escritura ──────────────────────────────────────────────────────
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const archivo = path.join(__dirname, `backup-roles-${stamp}.json`);
-  fs.writeFileSync(archivo, JSON.stringify({
-    fecha: new Date().toISOString(),
-    modelo: { _id: String(modelo._id), companyCode: modelo.companyCode, code: modelo.code },
-    roles: pendientes.map((r) => ({
-      _id: String(r._id), companyCode: r.companyCode, code: r.code,
-      permissions: r.permissions || [], elevatedPermissions: r.elevatedPermissions || [],
-    })),
-  }, null, 2));
-  console.log(`\nBackup: ${archivo}`);
-
-  for (const r of pendientes) {
-    await db.collection("roles").updateOne(
-      { _id: r._id },
-      { $set: { permissions: [...permisos], elevatedPermissions: [...elevados] } },
-    );
-  }
-  console.log(`Listo: ${pendientes.length} rol(es) actualizados con los permisos del modelo.`);
-  console.log("Los usuarios conectados conservan sus permisos viejos hasta el proximo login.");
-  console.log(`Para revertir:  node clonar-rol-modelo.js --revertir=${path.basename(archivo)} --aplicar`);
-
-  await mongoose.disconnect();
-}
-
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
+    const igual = misma(r.permissions, permisos) && misma(r.elevatedPermissions, elevados);
+    const usuarios = db.users.countDocuments({ companyCode: r.companyCode, role: r.code, deleted: { $ne: true } });
+    print('      ' + (r.code + '                ').slice(0, 16) +
+          ((r.name || '') + '                      ').slice(0, 22) +
+          ('   ' + (r.permissions || []).length).slice(-4) + ' permisos, ' +
+          usuarios + ' usuario(s)' + (igual ? '   (ya igual al modelo)' : ''));
+    if (!igual) pendientes.push(r);
 });
+
+print('\n' + pendientes.length + ' rol(es) cambiarían; ' + (roles.length - pendientes.length) + ' ya están igual al modelo.');
+
+if (DRY_RUN) {
+    print('\nDRY RUN: no se escribió nada. Revisá la lista — sobre todo las empresas con OJO —');
+    print('y volvé a correr con DRY_RUN = false cuando estés de acuerdo.');
+} else if (pendientes.length) {
+    const corrida = new Date().toISOString();
+
+    // BACKUP en la propia base: los permisos anteriores de cada rol tocado.
+    // getCollection y no db._backup...: mongosh no resuelve por punto los nombres con guion bajo.
+    db.getCollection('_backup_roles_permisos').insertMany(pendientes.map(r => ({
+        corrida: corrida,
+        roleId: r._id,
+        companyCode: r.companyCode,
+        code: r.code,
+        permissions: r.permissions || [],
+        elevatedPermissions: r.elevatedPermissions || []
+    })));
+
+    pendientes.forEach(r => {
+        db.roles.updateOne(
+            { _id: r._id },
+            { $set: { permissions: permisos.slice(), elevatedPermissions: elevados.slice() } }
+        );
+    });
+
+    print('\nListo: ' + pendientes.length + ' rol(es) actualizados.');
+    print('Backup guardado en _backup_roles_permisos (corrida: ' + corrida + ').');
+    print('Los usuarios conectados conservan sus permisos viejos hasta el próximo login.');
+    print('\nPARA REVERTIR, pegá esto:');
+    print("  db.getCollection('_backup_roles_permisos').find({ corrida: '" + corrida + "' }).forEach(b =>");
+    print("    db.roles.updateOne({ _id: b.roleId }, { $set: { permissions: b.permissions, elevatedPermissions: b.elevatedPermissions } }));");
+}
