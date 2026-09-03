@@ -53,6 +53,36 @@ const EXCLUIR = (process.env.EXCLUIR || "system,dcom").split(",").map((s) => s.t
 const mismaLista = (a, b) =>
   JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort());
 
+/**
+ * MONGO_URL del entorno o, si no esta, del .env del API.
+ *
+ * Se lee del archivo a proposito: la contraseña de produccion tiene `&` y exportarla a mano
+ * desde el shell la corta (y escaparla es un paso mas para equivocarse). Se toma SOLO la linea
+ * MONGO_URL=, tal cual, sin pasar por el shell.
+ */
+function resolverMongoUrl() {
+  if (process.env.MONGO_URL) return process.env.MONGO_URL;
+  const explicito = (process.argv.find((a) => a.startsWith("--env=")) || "").split("=")[1];
+  const candidatos = [
+    explicito,
+    "/usr/local/etc/egarian_api/.env.production",
+    "/usr/local/etc/egarian-api/.env.production",
+    "/usr/local/etc/egarian-api/.env",
+    path.join(process.cwd(), ".env"),
+  ].filter(Boolean);
+
+  for (const archivo of candidatos) {
+    try {
+      const linea = fs.readFileSync(archivo, "utf8").split(/\r?\n/).find((l) => l.startsWith("MONGO_URL="));
+      if (linea) {
+        console.log(`(MONGO_URL leido de ${archivo})`);
+        return linea.slice("MONGO_URL=".length).trim().replace(/^["']|["']$/g, "");
+      }
+    } catch { /* siguiente candidato */ }
+  }
+  return "";
+}
+
 async function revertir(db, archivo) {
   const backup = JSON.parse(fs.readFileSync(archivo, "utf8"));
   console.log(`Revirtiendo ${backup.roles.length} rol(es) desde ${path.basename(archivo)} (tomado ${backup.fecha})\n`);
@@ -71,9 +101,9 @@ async function revertir(db, archivo) {
 }
 
 async function main() {
-  const url = process.env.MONGO_URL;
+  const url = resolverMongoUrl();
   if (!url) {
-    console.error("Falta MONGO_URL en el entorno.");
+    console.error("No se encontro MONGO_URL: exportalo, o pasa --env=/ruta/al/.env.production");
     process.exit(1);
   }
 

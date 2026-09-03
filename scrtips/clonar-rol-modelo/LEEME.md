@@ -17,20 +17,24 @@ estado sin abrirlos uno por uno en el ERP.
 
 ## Uso
 
+Necesita `mongoose`, que no está en esta carpeta. Lo más simple en el servidor es copiarlo al
+directorio del API y correrlo ahí: encuentra el `node_modules` y el `.env` solo.
+
 ```bash
-export MONGO_URL="mongodb://..."          # /usr/local/etc/egarian_api/.env.production
-export MODELO_ID="6a47c3c7451964c77c37297f"
+cp clonar-rol-modelo.js /usr/local/etc/egarian-api/
+cd /usr/local/etc/egarian-api
 
-# Necesita mongoose: copiá el script junto al API o apuntá NODE_PATH a su node_modules
-export NODE_PATH=/var/www/egarian-api/node_modules
-
-node clonar-rol-modelo.js                  # DRY RUN: qué empresas y roles alcanza
-node clonar-rol-modelo.js --aplicar        # escribe (deja backup)
-node clonar-rol-modelo.js --code=basico    # sólo los roles con ese código
+MODELO_ID=6a47c3c7451964c77c37297f node clonar-rol-modelo.js              # DRY RUN
+MODELO_ID=6a47c3c7451964c77c37297f node clonar-rol-modelo.js --aplicar    # escribe (deja backup)
+MODELO_ID=6a47c3c7451964c77c37297f node clonar-rol-modelo.js --code=basico
 ```
 
+**No hace falta exportar `MONGO_URL`**: si no está en el entorno, el script lo lee del `.env` del
+API (o del que le pases con `--env=/ruta/.env.production`). Se toma la línea tal cual, así que la
+contraseña con `&` no se corta como pasaría al exportarla desde el shell.
+
 Variables: `MODELO_ID` (o `MODELO_COMPANY` + `MODELO_CODE`), `EXCLUIR` (por defecto
-`system,dcom`), `MONGO_URL`.
+`system,dcom`), `MONGO_URL` si querés forzarla.
 
 ## Volver atrás
 
