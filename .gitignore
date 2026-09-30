@@ -24,3 +24,6 @@ egarian-pos/
 .env.*
 !.env.example
 
+
+# Copia local de la API con un .env.production adentro: nunca se versiona.
+dcom-demo/

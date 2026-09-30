@@ -1,0 +1,49 @@
+NO SUBIR (decision del usuario 2026-09-25): la correccion de la fila viaja en la version final del OMS.
+Este paquete queda solo como evidencia.
+
+CORRECCION DE PRODUCCION: LA FILA DE PREPARACION
+================================================
+ERP 1.0.0.149 (produccion: 1.0.0.148) · API 1.0.0.81 (produccion: 1.0.0.80)
+Preparado el 2026-09-25. PENDIENTE DE AUTORIZACION: no esta en to_deploy a proposito.
+
+QUE CORRIGE
+En Preparacion, la fila de un pedido con parte ya despachada podia mostrar 0 por separar y darlo
+por Listo con unidades sin tocar en el estante, y un pedido entregado entero seguia como trabajo.
+
+COMO SE ARMO: PARTIENDO DE LO DESPLEGADO
+Los paquetes son los zips de la 1.0.0.148 (to_deploy/*.OBSOLETO-2026-09-24) con SOLO estos archivos
+reemplazados; todo lo demas es identico byte a byte (verificado entrada por entrada):
+  API: dist/services/transaction/order/orderEligibilityService.js (+ .map)
+       dist/services/transaction/order/orderPreparationLines.js (+ .map, .d.ts)
+       version.json
+  ERP: views/transactions/oms/oms_prep_mgr.ejs, version.json, releases.json (+ la 1.0.0.149)
+
+COMMITS DE DONDE SALE LA CORRECCION
+  API: egarian-api 14953be (compilado; la diferencia con lo desplegado es sólo
+       resumenDePreparacion y su uso en el enriquecido de la grilla)
+  ERP: egarian-erp 7f8a8f2 (la vista; la diferencia es sólo la cuenta de la fila)
+NO incluye C3, A2 ni C1.
+
+POR QUE NO SE CONSTRUYO DESDE UN COMMIT ENTERO
+La 1.0.0.148 se construyo desde el arbol de trabajo y lleva cosas que no estan en ningun commit:
+  - API: los cambios SIN COMMITEAR de la sesion de terminales (terminal.ctl y
+    terminalAccessService; identicos a los del arbol actual, verificado). Un build desde commits
+    los revertiria en produccion.
+  - ERP: views/system/logs/log_mgr.ejs, que git ignora (la regla logs/ del .gitignore) y deploy.sh
+    borraria al reemplazar views/.
+Hasta que esas dos cosas esten commiteadas, un build "desde commits" no reproduce produccion.
+
+VERIFICACION
+  - Compilado 14953be + los archivos de terminales: 1290 archivos de dist identicos al zip; solo
+    difieren los 3 de la correccion.
+  - Suite completa de la API sobre ese estado: 1504 / 1505 (la unica roja, integrationNotify,
+    intermitente conocida, pasa sola). El caso pedido: "10 pedidas, 6 preparadas y DESPACHADAS:
+    la fila dice 4 por separar" y "entregado por completo con historial: no tiene trabajo", en verde.
+  - ERP: la prueba de pantalla de la fila paso en la suite completa de 7f8a8f2.
+
+SHA-256
+  egarian-api.zip 90a952d83b9f2257e0035043bdcfaa55f007407cd852395e32db7a63fc9c0ad7
+  egarian-erp.zip 96c683bd5d056227cfe174a252ad08535b985f26f09fc4a7cd9683c5cf894be1
+
+PARA PUBLICAR (con autorizacion): copiar los dos zips a to_deploy/ y correr deploy.sh como siempre.
+Despues, registrar la 1.0.0.149 en releases.json de develop (la nota ya esta en unreleased).
